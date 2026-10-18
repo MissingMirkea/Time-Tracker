@@ -1,17 +1,33 @@
 import base64
+import csv
 import ctypes
+import fnmatch
 import os
+import queue
 import shutil
 import struct
 import sys
 import time
 import winreg
 import zlib
+from datetime import date, datetime, timedelta
 import tkinter as tk
-from tkinter import ttk
+from tkinter import filedialog, messagebox, ttk
 from ctypes import wintypes
-from database import create_database, get_summary, log_activity
-from tracker import get_active_window_info, get_system_sleep_time
+from PIL import Image
+import pystray
+from database import (
+    create_database,
+    delete_all_activities,
+    delete_activities_for_period,
+    get_activities_for_period,
+    get_daily_totals,
+    get_setting,
+    get_summary_for_period,
+    log_activity,
+    set_setting,
+)
+from tracker import get_active_window_info, get_idle_time, get_system_sleep_time
 
 
 def resource_path(relative_path: str) -> str:
@@ -48,6 +64,45 @@ def _resolve_executable_path(app_name: str, executable_path: str) -> str:
             except OSError:
                 continue
     return ""
+
+
+def _windows_startup_command() -> str:
+    if getattr(sys, "frozen", False):
+        executable = sys.executable
+        arguments = "--minimized"
+    else:
+        executable = os.path.splitext(sys.executable)[0] + "w.exe"
+        if not os.path.isfile(executable):
+            executable = sys.executable
+        arguments = f'"{os.path.abspath(__file__)}" --minimized'
+    return f'"{executable}" {arguments}'
+
+
+def _set_windows_startup(enabled: bool):
+    run_key_path = "Software\\Microsoft\\Windows\\CurrentVersion\\Run"
+    with winreg.OpenKey(
+        winreg.HKEY_CURRENT_USER,
+        run_key_path,
+        0,
+        winreg.KEY_SET_VALUE | winreg.KEY_QUERY_VALUE,
+    ) as key:
+        if enabled:
+            winreg.SetValueEx(
+                key, "TimeTracker", 0, winreg.REG_SZ, _windows_startup_command()
+            )
+        else:
+            try:
+                winreg.DeleteValue(key, "TimeTracker")
+            except FileNotFoundError:
+                pass
+
+
+def _load_minute_setting(key: str, default: int) -> int:
+    try:
+        minutes = int(get_setting(key, str(default)))
+    except ValueError:
+        return default
+    return minutes if 0 <= minutes <= 1440 else default
 
 
 def _png_chunk(chunk_type: bytes, data: bytes) -> bytes:
@@ -223,8 +278,8 @@ class TimeTrackerGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Time Tracker")
-        self.root.geometry("800x520")
-        self.root.minsize(650, 400)
+        self.root.geometry("940x720")
+        self.root.minsize(760, 600)
 
         # Set Window Icon if app_icon.ico exists in project directory
         icon_path = resource_path("app_icon.ico")
@@ -239,17 +294,123 @@ class TimeTrackerGUI:
         self.current_app = ""
         self.current_title = ""
         self.current_executable_path = ""
+        self.current_activity_excluded = False
+        self.resume_after_idle = False
+        self.track_after_id = None
         self.start_time = 0.0
         self.last_check_time = 0.0
         self.sleep_time = 0.0
         self.app_images: dict[str, tk.PhotoImage | None] = {}
+        self.tray_icon = None
+        self.tray_actions = queue.Queue()
+        self._closing = False
+        self.idle_threshold_minutes = _load_minute_setting(
+            "idle_threshold_minutes", 5
+        )
+        self.excluded_apps_var = tk.StringVar(value=get_setting("excluded_apps"))
+        self.excluded_titles_var = tk.StringVar(
+            value=get_setting("excluded_titles")
+        )
+        self.daily_goal_minutes = _load_minute_setting(
+            "daily_goal_minutes", 240
+        )
 
         # Apply visual theme
         self._configure_styles()
 
         # Build UI
         self._build_ui()
+        self.root.protocol("WM_DELETE_WINDOW", self.close_app)
+        self.root.bind("<Unmap>", self._on_minimize)
         self.refresh_table()
+        self._setup_tray_icon()
+        self.root.after(100, self._process_tray_actions)
+
+    def _setup_tray_icon(self):
+        icon_path = resource_path("app_icon.ico")
+        with Image.open(icon_path) as image:
+            tray_image = image.convert("RGBA").resize(
+                (64, 64), Image.Resampling.LANCZOS
+            )
+
+        self.tray_icon = pystray.Icon(
+            "TimeTracker",
+            tray_image,
+            "Time Tracker",
+            menu=pystray.Menu(
+                pystray.MenuItem(
+                    "Show Time Tracker",
+                    lambda _icon, _item: self._schedule_tk_action(
+                        self.show_window
+                    ),
+                    default=True,
+                ),
+                pystray.MenuItem(
+                    lambda _item: (
+                        "Pause tracking" if self.is_tracking
+                        else "Start tracking"
+                    ),
+                    lambda _icon, _item: self._schedule_tk_action(
+                        self.toggle_tracking
+                    ),
+                ),
+                pystray.Menu.SEPARATOR,
+                pystray.MenuItem(
+                    "Exit",
+                    lambda _icon, _item: self._schedule_tk_action(
+                        self.close_app
+                    ),
+                ),
+            ),
+        )
+        self.tray_icon.run_detached()
+
+    def _schedule_tk_action(self, action):
+        if not self._closing:
+            self.tray_actions.put(action)
+
+    def _process_tray_actions(self):
+        while True:
+            try:
+                action = self.tray_actions.get_nowait()
+            except queue.Empty:
+                break
+            if not self._closing:
+                action()
+        if not self._closing:
+            self.root.after(100, self._process_tray_actions)
+
+    def _on_minimize(self, _event=None):
+        if self.root.state() == "iconic":
+            self.root.after_idle(self.root.withdraw)
+
+    def show_window(self):
+        if self._closing:
+            return
+        self.root.deiconify()
+        self.root.state("normal")
+        self.root.lift()
+        self.root.focus_force()
+
+    def toggle_tracking(self):
+        if self.is_tracking:
+            self.stop_tracking()
+        else:
+            self.start_tracking()
+
+    def _schedule_track_loop(self):
+        if self.track_after_id is None:
+            self.track_after_id = self.root.after(1000, self.track_loop)
+
+    def close_app(self):
+        if self._closing:
+            return
+        self._closing = True
+        if self.is_tracking:
+            self.stop_tracking()
+        if self.tray_icon is not None:
+            self.tray_icon.stop()
+        self.root.destroy()
 
     def _configure_styles(self):
         """Sets up custom fonts, colors, and button styles using ttk."""
@@ -347,13 +508,165 @@ class TimeTrackerGUI:
         )
         self.btn_start.pack(side=tk.RIGHT, padx=5)
 
-        # Summary Table Card
+        period_card = ttk.Frame(main_container, style="Card.TFrame", padding=10)
+        period_card.pack(fill=tk.X, pady=(0, 12))
+
+        ttk.Label(
+            period_card, text="Showing:", style="Header.TLabel"
+        ).pack(side=tk.LEFT, padx=(4, 8))
+        self.period_var = tk.StringVar(value="Today")
+        self.period_combo = ttk.Combobox(
+            period_card,
+            textvariable=self.period_var,
+            values=("Today", "This Week", "Custom"),
+            state="readonly",
+            width=12,
+        )
+        self.period_combo.pack(side=tk.LEFT)
+        self.period_combo.bind(
+            "<<ComboboxSelected>>", self._on_period_changed
+        )
+        self.start_date_var = tk.StringVar(value=date.today().isoformat())
+        self.end_date_var = tk.StringVar(value=date.today().isoformat())
+        ttk.Label(period_card, text="From").pack(side=tk.LEFT, padx=(12, 4))
+        self.start_date_entry = ttk.Entry(
+            period_card, textvariable=self.start_date_var, width=11
+        )
+        self.start_date_entry.pack(side=tk.LEFT)
+        ttk.Label(period_card, text="To").pack(side=tk.LEFT, padx=(8, 4))
+        self.end_date_entry = ttk.Entry(
+            period_card, textvariable=self.end_date_var, width=11
+        )
+        self.end_date_entry.pack(side=tk.LEFT)
+        for entry in (self.start_date_entry, self.end_date_entry):
+            entry.bind("<Return>", lambda _event: self.refresh_table())
+            entry.bind("<FocusOut>", lambda _event: self.refresh_table())
+        self.period_error_label = ttk.Label(
+            period_card, foreground="#DC2626"
+        )
+        self.period_error_label.pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Label(period_card, text="Search").pack(
+            side=tk.LEFT, padx=(12, 4)
+        )
+        self.search_var = tk.StringVar()
+        self.search_var.trace_add(
+            "write", lambda *_args: self.refresh_table()
+        )
+        ttk.Entry(
+            period_card, textvariable=self.search_var, width=16
+        ).pack(side=tk.LEFT)
+        ttk.Button(
+            period_card,
+            text="Settings",
+            command=self.show_settings,
+        ).pack(side=tk.RIGHT, padx=4)
+        ttk.Button(
+            period_card,
+            text="Export CSV",
+            command=self.export_csv,
+        ).pack(side=tk.RIGHT, padx=4)
+
+        dashboard_card = ttk.Frame(
+            main_container, style="Card.TFrame", padding=15
+        )
+        dashboard_card.pack(fill=tk.X, pady=(0, 12))
+
+        summary_frame = ttk.Frame(dashboard_card, style="Card.TFrame")
+        summary_frame.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 20))
+        ttk.Label(
+            summary_frame, text="TOTAL TRACKED", style="Header.TLabel"
+        ).pack(anchor=tk.W)
+        self.total_time_label = ttk.Label(
+            summary_frame,
+            text="0s",
+            background="#FFFFFF",
+            foreground="#16A34A",
+            font=("Segoe UI", 24, "bold"),
+        )
+        self.total_time_label.pack(anchor=tk.W, pady=(4, 12))
+        ttk.Label(
+            summary_frame, text="MOST USED APP", style="Header.TLabel"
+        ).pack(anchor=tk.W)
+        self.top_app_label = ttk.Label(
+            summary_frame,
+            text="No activity yet",
+            background="#FFFFFF",
+            foreground="#0F172A",
+            font=("Segoe UI", 10),
+            wraplength=180,
+        )
+        self.top_app_label.pack(anchor=tk.W, pady=(4, 0))
+        ttk.Label(
+            summary_frame, text="DAILY GOAL", style="Header.TLabel"
+        ).pack(anchor=tk.W, pady=(12, 0))
+        self.goal_label = ttk.Label(
+            summary_frame,
+            text="0 / 0 min",
+            background="#FFFFFF",
+            foreground="#334155",
+            font=("Segoe UI", 9),
+        )
+        self.goal_label.pack(anchor=tk.W, pady=(4, 2))
+        self.goal_progress = ttk.Progressbar(
+            summary_frame, maximum=100, length=180, mode="determinate"
+        )
+        self.goal_progress.pack(anchor=tk.W)
+
+        chart_frame = ttk.Frame(dashboard_card, style="Card.TFrame")
+        chart_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.chart_title = ttk.Label(
+            chart_frame, text="Top applications", style="Header.TLabel"
+        )
+        self.chart_title.pack(anchor=tk.W, pady=(0, 4))
+        self.chart = tk.Canvas(
+            chart_frame,
+            height=170,
+            background="#FFFFFF",
+            highlightthickness=0,
+        )
+        self.chart.pack(fill=tk.BOTH, expand=True)
+        self.chart.bind("<Configure>", lambda _event: self._draw_chart())
+
+        # Period summary and timeline
         table_card = ttk.Frame(main_container, style="Card.TFrame", padding=15)
         table_card.pack(fill=tk.BOTH, expand=True)
 
+        self.history_tabs = ttk.Notebook(table_card)
+        self.history_tabs.pack(fill=tk.BOTH, expand=True)
+        summary_tab = ttk.Frame(self.history_tabs)
+        timeline_tab = ttk.Frame(self.history_tabs)
+        self.history_tabs.add(summary_tab, text="App Summary")
+        self.history_tabs.add(timeline_tab, text="Timeline")
+        summary_controls = ttk.Frame(summary_tab, padding=(6, 6, 6, 3))
+        summary_controls.pack(fill=tk.X)
+        ttk.Label(
+            summary_controls,
+            text="Select an app to exclude it from future tracking.",
+        ).pack(side=tk.LEFT)
+        self.exclude_summary_app_button = ttk.Button(
+            summary_controls,
+            text="Exclude selected app",
+            command=self.exclude_selected_summary_app,
+            state=tk.DISABLED,
+        )
+        self.exclude_summary_app_button.pack(side=tk.RIGHT)
+        timeline_controls = ttk.Frame(timeline_tab, padding=(6, 6, 6, 3))
+        timeline_controls.pack(fill=tk.X)
+        ttk.Label(
+            timeline_controls,
+            text="Select an activity to exclude its app from future tracking.",
+        ).pack(side=tk.LEFT)
+        self.exclude_timeline_app_button = ttk.Button(
+            timeline_controls,
+            text="Exclude selected app",
+            command=self.exclude_selected_timeline_app,
+            state=tk.DISABLED,
+        )
+        self.exclude_timeline_app_button.pack(side=tk.RIGHT)
+
         columns = ("app", "window_title", "time")
         self.tree = ttk.Treeview(
-            table_card,
+            summary_tab,
             columns=columns,
             show="tree headings",
             selectmode="browse",
@@ -371,12 +684,148 @@ class TimeTrackerGUI:
         self.tree.column("time", width=140, anchor=tk.E)
 
         scrollbar = ttk.Scrollbar(
-            table_card, orient=tk.VERTICAL, command=self.tree.yview
+            summary_tab, orient=tk.VERTICAL, command=self.tree.yview
         )
         self.tree.configure(yscrollcommand=scrollbar.set)
 
         self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.tree.bind(
+            "<<TreeviewSelect>>", self._on_summary_selection_changed
+        )
+
+        timeline_columns = ("timestamp", "app", "window_title", "duration")
+        self.timeline_tree = ttk.Treeview(
+            timeline_tab,
+            columns=timeline_columns,
+            show="headings",
+            selectmode="browse",
+            style="Treeview",
+        )
+        for column, heading in (
+            ("timestamp", "Start Time"),
+            ("app", "Application"),
+            ("window_title", "Window Title"),
+            ("duration", "Duration"),
+        ):
+            self.timeline_tree.heading(column, text=heading)
+        self.timeline_tree.column("timestamp", width=155, anchor=tk.W)
+        self.timeline_tree.column("app", width=150, anchor=tk.W)
+        self.timeline_tree.column("window_title", width=310, anchor=tk.W)
+        self.timeline_tree.column("duration", width=100, anchor=tk.E)
+        timeline_scrollbar = ttk.Scrollbar(
+            timeline_tab,
+            orient=tk.VERTICAL,
+            command=self.timeline_tree.yview,
+        )
+        self.timeline_tree.configure(yscrollcommand=timeline_scrollbar.set)
+        self.timeline_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        timeline_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.timeline_tree.bind(
+            "<<TreeviewSelect>>", self._on_timeline_selection_changed
+        )
+
+        self.start_date_entry.configure(state="disabled")
+        self.end_date_entry.configure(state="disabled")
+
+    def _on_period_changed(self, _event=None):
+        custom_enabled = self.period_var.get() == "Custom"
+        state = "normal" if custom_enabled else "disabled"
+        self.start_date_entry.configure(state=state)
+        self.end_date_entry.configure(state=state)
+        self.refresh_table()
+
+    def _on_timeline_selection_changed(self, _event=None):
+        state = (
+            tk.NORMAL
+            if self.timeline_tree.selection()
+            else tk.DISABLED
+        )
+        self.exclude_timeline_app_button.configure(state=state)
+
+    def _on_summary_selection_changed(self, _event=None):
+        state = tk.NORMAL if self.tree.selection() else tk.DISABLED
+        self.exclude_summary_app_button.configure(state=state)
+
+    @staticmethod
+    def _literal_glob_pattern(value: str) -> str:
+        replacements = {"[": "[[]", "]": "[]]", "*": "[*]", "?": "[?]"}
+        return "".join(
+            replacements.get(character, character) for character in value
+        )
+
+    def exclude_selected_timeline_app(self):
+        selection = self.timeline_tree.selection()
+        if not selection:
+            self._on_timeline_selection_changed()
+            return
+
+        selected_values = self.timeline_tree.item(selection[0], "values")
+        self._exclude_app(selected_values[1])
+
+    def exclude_selected_summary_app(self):
+        selection = self.tree.selection()
+        if not selection:
+            self._on_summary_selection_changed()
+            return
+
+        selected_values = self.tree.item(selection[0], "values")
+        self._exclude_app(selected_values[0])
+
+    def _exclude_app(self, app_name: str):
+        patterns = [
+            pattern.strip()
+            for pattern in self.excluded_apps_var.get().splitlines()
+            if pattern.strip()
+        ]
+        if self._patterns_match(app_name, "\n".join(patterns)):
+            messagebox.showinfo(
+                "Already excluded",
+                f"{app_name} is already excluded from tracking.",
+                parent=self.root,
+            )
+            return
+
+        patterns.append(self._literal_glob_pattern(app_name))
+        excluded_apps = "\n".join(patterns)
+        set_setting("excluded_apps", excluded_apps)
+        self.excluded_apps_var.set(excluded_apps)
+
+        if (
+            self.is_tracking
+            and self.current_app.casefold() == app_name.casefold()
+            and not self.current_activity_excluded
+        ):
+            now = time.time()
+            log_activity(
+                self.current_app,
+                self.current_title,
+                max(0.0, now - self.start_time),
+                self.current_executable_path,
+            )
+            self.current_activity_excluded = True
+            self.start_time = now
+            self.last_check_time = now
+
+        self.refresh_table()
+        messagebox.showinfo(
+            "App excluded",
+            f"{app_name} will no longer be recorded. Existing history is unchanged.",
+            parent=self.root,
+        )
+
+    def _period_dates(self) -> tuple[date, date]:
+        today = date.today()
+        if self.period_var.get() == "This Week":
+            start_date = today - timedelta(days=today.weekday())
+            return start_date, start_date + timedelta(days=7)
+        if self.period_var.get() == "Custom":
+            start_date = date.fromisoformat(self.start_date_var.get().strip())
+            selected_end = date.fromisoformat(self.end_date_var.get().strip())
+            if selected_end < start_date:
+                raise ValueError("End date must be on or after the start date.")
+            return start_date, selected_end + timedelta(days=1)
+        return today, today + timedelta(days=1)
 
     def format_time(self, seconds: float) -> str:
         """Converts raw seconds into a readable format (e.g. 1h 23m 45s)."""
@@ -393,12 +842,38 @@ class TimeTrackerGUI:
             return f"{secs}s"
 
     def refresh_table(self):
-        """Reloads summary data from SQLite into the GUI table."""
+        """Refresh the selected period's app table and dashboard."""
+        try:
+            start_date, end_date = self._period_dates()
+        except ValueError:
+            self.period_error_label.config(
+                text="Enter a valid date range (YYYY-MM-DD)."
+            )
+            return
+        self.period_error_label.config(text="")
         for row in self.tree.get_children():
             self.tree.delete(row)
+        for row in self.timeline_tree.get_children():
+            self.timeline_tree.delete(row)
+        self._on_summary_selection_changed()
+        self._on_timeline_selection_changed()
 
-        summary_data = get_summary()
-        for app_name, window_title, total_seconds, executable_path in summary_data:
+        start_key, end_key = start_date.isoformat(), end_date.isoformat()
+        summary_data = get_summary_for_period(start_key, end_key)
+        self.refresh_dashboard(summary_data, start_date, end_date)
+
+        search = self.search_var.get().strip().casefold()
+        visible_summary = [
+            row
+            for row in summary_data
+            if not self._patterns_match(row[0], self.excluded_apps_var.get())
+            and (
+                not search
+                or search in row[0].casefold()
+                or search in row[1].casefold()
+            )
+        ]
+        for app_name, window_title, total_seconds, executable_path in visible_summary:
             image = self._get_app_image(app_name, executable_path)
             item_options = {
                 "values": (
@@ -414,6 +889,394 @@ class TimeTrackerGUI:
                 tk.END,
                 **item_options,
             )
+        timeline = get_activities_for_period(start_key, end_key)
+        for timestamp, app_name, window_title, duration in timeline:
+            if search and search not in app_name.casefold() and search not in window_title.casefold():
+                continue
+            time_label = datetime.fromisoformat(timestamp).strftime("%Y-%m-%d %H:%M:%S")
+            self.timeline_tree.insert(
+                "",
+                tk.END,
+                values=(
+                    time_label,
+                    app_name,
+                    window_title,
+                    self.format_time(duration),
+                ),
+            )
+
+    def refresh_dashboard(
+        self,
+        summary_data: list[tuple],
+        start_date: date,
+        end_date: date,
+    ):
+        app_totals: dict[str, float] = {}
+        for app_name, _window_title, duration, _path in summary_data:
+            app_totals[app_name] = app_totals.get(app_name, 0.0) + duration
+
+        total_seconds = sum(app_totals.values())
+        self.total_time_label.config(text=self.format_time(total_seconds))
+        if app_totals:
+            top_app = max(app_totals, key=app_totals.get)
+            self.top_app_label.config(
+                text=f"{top_app}  ·  {self.format_time(app_totals[top_app])}"
+            )
+        else:
+            self.top_app_label.config(text="No activity yet")
+
+        today = date.today()
+        today_totals = get_summary_for_period(
+            today.isoformat(), (today + timedelta(days=1)).isoformat()
+        )
+        today_seconds = sum(row[2] for row in today_totals)
+        goal_minutes = self.daily_goal_minutes
+        goal_seconds = goal_minutes * 60
+        progress = (
+            min(100, int(today_seconds * 100 / goal_seconds))
+            if goal_seconds > 0
+            else 0
+        )
+        self.goal_progress.configure(value=progress)
+        if goal_minutes:
+            self.goal_label.config(
+                text=(
+                    f"{int(today_seconds // 60)} / {goal_minutes} min"
+                    f"  ({progress}%)"
+                )
+            )
+        else:
+            self.goal_label.config(text="No goal set")
+
+        if self.period_var.get() == "This Week":
+            self.chart_title.config(text="Daily usage this week")
+            daily_totals = dict(
+                get_daily_totals(start_date.isoformat(), end_date.isoformat())
+            )
+            chart_data = [
+                (
+                    (start_date + timedelta(days=offset)).strftime("%a"),
+                    daily_totals.get(
+                        (start_date + timedelta(days=offset)).isoformat(), 0
+                    ),
+                )
+                for offset in range(7)
+            ]
+        else:
+            self.chart_title.config(text="Top applications today")
+            chart_data = sorted(
+                app_totals.items(), key=lambda item: item[1], reverse=True
+            )[:5]
+        self._draw_chart(chart_data)
+
+    def _draw_chart(self, chart_data: list[tuple[str, float]] | None = None):
+        if chart_data is not None:
+            self.chart_data = chart_data
+        else:
+            chart_data = getattr(self, "chart_data", [])
+
+        self.chart.delete("all")
+        if not chart_data:
+            self.chart.create_text(
+                8,
+                20,
+                text="No activity for this period yet.",
+                anchor=tk.W,
+                fill="#64748B",
+                font=("Segoe UI", 9),
+            )
+            return
+
+        width = max(self.chart.winfo_width(), 300)
+        row_height = 25 if len(chart_data) > 5 else 30
+        label_width = 105
+        value_width = 65
+        bar_start = label_width
+        bar_end = width - value_width - 8
+        bar_width = max(20, bar_end - bar_start)
+        max_value = max(value for _label, value in chart_data) or 1
+
+        for index, (label, value) in enumerate(chart_data):
+            y = index * row_height + 13
+            display_label = label[:16]
+            self.chart.create_text(
+                2,
+                y,
+                text=display_label,
+                anchor=tk.W,
+                fill="#334155",
+                font=("Segoe UI", 9),
+            )
+            self.chart.create_rectangle(
+                bar_start,
+                y - 6,
+                bar_start + bar_width * value / max_value,
+                y + 6,
+                fill="#16A34A",
+                outline="",
+            )
+            self.chart.create_text(
+                width - 4,
+                y,
+                text=self.format_time(value),
+                anchor=tk.E,
+                fill="#64748B",
+                font=("Segoe UI", 8),
+            )
+
+    def export_csv(self):
+        start_date, end_date = self._period_dates()
+        activities = get_activities_for_period(
+            start_date.isoformat(), end_date.isoformat()
+        )
+        if not activities:
+            messagebox.showinfo(
+                "Nothing to export",
+                "There is no activity recorded for this period yet.",
+                parent=self.root,
+            )
+            return
+
+        default_name = f"time-tracker-{self.period_var.get().lower().replace(' ', '-')}.csv"
+        path = filedialog.asksaveasfilename(
+            parent=self.root,
+            title="Export activity to CSV",
+            defaultextension=".csv",
+            initialfile=default_name,
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+        )
+        if not path:
+            return
+
+        try:
+            with open(path, "w", newline="", encoding="utf-8-sig") as csv_file:
+                writer = csv.writer(csv_file)
+                writer.writerow(
+                    ("Timestamp", "Application", "Window Title", "Duration (seconds)")
+                )
+                writer.writerows(
+                    (
+                        timestamp,
+                        app_name,
+                        window_title,
+                        round(duration, 2),
+                    )
+                    for timestamp, app_name, window_title, duration in activities
+                )
+        except OSError as error:
+            messagebox.showerror(
+                "Export failed",
+                f"Could not write the CSV file:\n{error}",
+                parent=self.root,
+            )
+            return
+
+        messagebox.showinfo(
+            "Export complete",
+            f"Exported {len(activities)} activity records.",
+            parent=self.root,
+        )
+
+    def show_settings(self):
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Settings & Privacy")
+        dialog.transient(self.root)
+        dialog.resizable(False, False)
+        container = ttk.Frame(dialog, padding=18)
+        container.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(
+            container,
+            text="Idle detection (minutes; 0 disables)",
+        ).grid(row=0, column=0, sticky=tk.W, pady=5)
+        idle_var = tk.StringVar(value=str(self.idle_threshold_minutes))
+        ttk.Entry(
+            container, textvariable=idle_var, width=12
+        ).grid(row=0, column=1, sticky=tk.E, pady=5)
+
+        ttk.Label(
+            container,
+            text="Daily tracking goal (minutes; 0 disables)",
+        ).grid(row=1, column=0, sticky=tk.W, pady=5)
+        goal_var = tk.StringVar(value=str(self.daily_goal_minutes))
+        ttk.Entry(
+            container, textvariable=goal_var, width=12
+        ).grid(row=1, column=1, sticky=tk.E, pady=5)
+
+        ttk.Label(
+            container,
+            text="Excluded application patterns (one per line)",
+        ).grid(row=2, column=0, columnspan=2, sticky=tk.W, pady=(12, 2))
+        apps_text = tk.Text(container, width=52, height=4, wrap=tk.WORD)
+        apps_text.grid(row=3, column=0, columnspan=2, sticky=tk.EW)
+        apps_text.insert("1.0", self.excluded_apps_var.get())
+
+        ttk.Label(
+            container,
+            text="Excluded window-title patterns (one per line)",
+        ).grid(row=4, column=0, columnspan=2, sticky=tk.W, pady=(12, 2))
+        titles_text = tk.Text(container, width=52, height=4, wrap=tk.WORD)
+        titles_text.grid(row=5, column=0, columnspan=2, sticky=tk.EW)
+        titles_text.insert("1.0", self.excluded_titles_var.get())
+
+        startup_var = tk.BooleanVar(
+            value=get_setting("start_with_windows", "0") == "1"
+        )
+        ttk.Checkbutton(
+            container,
+            text="Start with Windows (minimized to tray)",
+            variable=startup_var,
+        ).grid(row=6, column=0, columnspan=2, sticky=tk.W, pady=(12, 5))
+
+        button_row = ttk.Frame(container)
+        button_row.grid(row=7, column=0, columnspan=2, sticky=tk.EW, pady=(12, 0))
+        ttk.Button(
+            button_row,
+            text="Delete Today's Data",
+            command=self._delete_today_data,
+        ).pack(side=tk.LEFT)
+        ttk.Button(
+            button_row,
+            text="Delete All Data",
+            command=self._delete_all_data,
+        ).pack(side=tk.LEFT, padx=6)
+        ttk.Button(
+            button_row,
+            text="Save",
+            command=lambda: self._save_settings(
+                dialog,
+                apps_text,
+                titles_text,
+                idle_var,
+                goal_var,
+                startup_var,
+            ),
+        ).pack(side=tk.RIGHT)
+        ttk.Button(
+            button_row, text="Cancel", command=dialog.destroy
+        ).pack(side=tk.RIGHT, padx=6)
+
+        dialog.protocol("WM_DELETE_WINDOW", dialog.destroy)
+        dialog.grab_set()
+        dialog.focus_set()
+
+    def _save_settings(
+        self,
+        dialog: tk.Toplevel,
+        apps_text: tk.Text,
+        titles_text: tk.Text,
+        idle_var: tk.StringVar,
+        goal_var: tk.StringVar,
+        startup_var: tk.BooleanVar,
+    ):
+        try:
+            idle_minutes = int(idle_var.get())
+            goal_minutes = int(goal_var.get())
+            if not 0 <= idle_minutes <= 1440 or not 0 <= goal_minutes <= 1440:
+                raise ValueError
+        except ValueError:
+            messagebox.showerror(
+                "Invalid settings",
+                "Idle detection and daily goal must be whole numbers from 0 to 1440.",
+                parent=dialog,
+            )
+            return
+
+        excluded_apps = apps_text.get("1.0", "end-1c").strip()
+        excluded_titles = titles_text.get("1.0", "end-1c").strip()
+        start_with_windows = startup_var.get()
+        try:
+            _set_windows_startup(start_with_windows)
+        except OSError as error:
+            messagebox.showerror(
+                "Startup setting failed",
+                f"Could not update the Windows startup setting:\n{error}",
+                parent=dialog,
+            )
+            return
+
+        settings = {
+            "idle_threshold_minutes": str(idle_minutes),
+            "daily_goal_minutes": str(goal_minutes),
+            "excluded_apps": excluded_apps,
+            "excluded_titles": excluded_titles,
+            "start_with_windows": "1" if start_with_windows else "0",
+        }
+        for key, value in settings.items():
+            set_setting(key, value)
+        self.idle_threshold_minutes = idle_minutes
+        self.daily_goal_minutes = goal_minutes
+        self.excluded_apps_var.set(excluded_apps)
+        self.excluded_titles_var.set(excluded_titles)
+
+        if self.is_tracking:
+            excluded_now = self._is_activity_excluded(
+                self.current_app, self.current_title
+            )
+            if excluded_now != self.current_activity_excluded:
+                now = time.time()
+                if not self.current_activity_excluded:
+                    log_activity(
+                        self.current_app,
+                        self.current_title,
+                        max(0.0, now - self.start_time),
+                        self.current_executable_path,
+                    )
+                self.current_activity_excluded = excluded_now
+                self.start_time = now
+                self.last_check_time = now
+
+        self.refresh_table()
+        dialog.destroy()
+
+    @staticmethod
+    def _patterns_match(value: str, patterns: str) -> bool:
+        folded_value = value.casefold()
+        for pattern in patterns.splitlines():
+            pattern = pattern.strip()
+            if pattern and fnmatch.fnmatchcase(
+                folded_value, pattern.casefold()
+            ):
+                return True
+        return False
+
+    def _is_activity_excluded(self, app_name: str, window_title: str) -> bool:
+        return self._patterns_match(
+            app_name, self.excluded_apps_var.get()
+        ) or self._patterns_match(window_title, self.excluded_titles_var.get())
+
+    def _delete_today_data(self):
+        if not messagebox.askyesno(
+            "Delete today's data",
+            "Delete all activity recorded today? Tracking will resume afterward if active.",
+            parent=self.root,
+        ):
+            return
+        was_tracking = self.is_tracking
+        if was_tracking:
+            self.stop_tracking()
+        today = date.today()
+        delete_activities_for_period(
+            today.isoformat(), (today + timedelta(days=1)).isoformat()
+        )
+        self.refresh_table()
+        if was_tracking:
+            self.start_tracking()
+
+    def _delete_all_data(self):
+        if not messagebox.askyesno(
+            "Delete all data",
+            "Permanently delete all recorded activity? This cannot be undone.",
+            parent=self.root,
+        ):
+            return
+        was_tracking = self.is_tracking
+        if was_tracking:
+            self.stop_tracking()
+        delete_all_activities()
+        self.refresh_table()
+        if was_tracking:
+            self.start_tracking()
 
     def _get_app_image(
         self, app_name: str, executable_path: str
@@ -438,6 +1301,7 @@ class TimeTrackerGUI:
 
     def start_tracking(self):
         if not self.is_tracking:
+            self.resume_after_idle = False
             sleep_time = get_system_sleep_time()
             current_app, current_title, executable_path = get_active_window_info()
 
@@ -449,26 +1313,33 @@ class TimeTrackerGUI:
             self.current_app = current_app
             self.current_title = current_title
             self.current_executable_path = executable_path
+            self.current_activity_excluded = self._is_activity_excluded(
+                current_app, current_title
+            )
             self.start_time = time.time()
             self.last_check_time = self.start_time
             self.sleep_time = sleep_time
 
-            self.root.after(1000, self.track_loop)
+            if self.tray_icon is not None:
+                self.tray_icon.update_menu()
+            self._schedule_track_loop()
 
-    def stop_tracking(self, end_time=None):
+    def stop_tracking(self, end_time=None, status_text=None):
         if self.is_tracking:
             self.is_tracking = False
             self.btn_start.config(state=tk.NORMAL)
             self.btn_stop.config(state=tk.DISABLED)
             stopped_for_sleep = end_time is not None
-            status = (
+            status = status_text or (
                 "Status: STOPPED (SLEEP DETECTED)"
                 if stopped_for_sleep
                 else "Status: STOPPED"
             )
             self.status_label.config(text=status)
+            if self.tray_icon is not None:
+                self.tray_icon.update_menu()
 
-            if self.start_time > 0:
+            if self.start_time > 0 and not self.current_activity_excluded:
                 stop_time = end_time if stopped_for_sleep else time.time()
                 duration = max(0.0, stop_time - self.start_time)
                 log_activity(
@@ -481,7 +1352,25 @@ class TimeTrackerGUI:
             self.refresh_table()
 
     def track_loop(self):
+        self.track_after_id = None
         if not self.is_tracking:
+            if self.resume_after_idle:
+                idle_limit = self.idle_threshold_minutes * 60
+                if idle_limit == 0 or get_idle_time() < idle_limit:
+                    self.resume_after_idle = False
+                    self.start_tracking()
+                else:
+                    self._schedule_track_loop()
+            return
+
+        idle_limit = self.idle_threshold_minutes * 60
+        if idle_limit > 0 and get_idle_time() >= idle_limit:
+            self.resume_after_idle = True
+            self.stop_tracking(
+                end_time=self.last_check_time,
+                status_text="Status: PAUSED (IDLE)",
+            )
+            self._schedule_track_loop()
             return
 
         current_sleep_time = get_system_sleep_time()
@@ -500,21 +1389,25 @@ class TimeTrackerGUI:
         ):
             duration = now - self.start_time
 
-            log_activity(
-                self.current_app,
-                self.current_title,
-                duration,
-                self.current_executable_path,
-            )
+            if not self.current_activity_excluded:
+                log_activity(
+                    self.current_app,
+                    self.current_title,
+                    duration,
+                    self.current_executable_path,
+                )
             self.refresh_table()
 
             self.current_app = new_app
             self.current_title = new_title
             self.current_executable_path = executable_path
+            self.current_activity_excluded = self._is_activity_excluded(
+                new_app, new_title
+            )
             self.start_time = now
 
         self.last_check_time = now
-        self.root.after(1000, self.track_loop)
+        self._schedule_track_loop()
 
 
 if __name__ == "__main__":
@@ -524,4 +1417,6 @@ if __name__ == "__main__":
 
     root = tk.Tk()
     app = TimeTrackerGUI(root)
+    if "--minimized" in sys.argv[1:]:
+        root.after_idle(root.withdraw)
     root.mainloop()

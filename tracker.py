@@ -7,11 +7,29 @@ from ctypes import wintypes
 
 user32 = ctypes.windll.user32
 kernel32 = ctypes.windll.kernel32
+user32.GetLastInputInfo.argtypes = [ctypes.c_void_p]
+user32.GetLastInputInfo.restype = wintypes.BOOL
 kernel32.GetTickCount64.restype = ctypes.c_ulonglong
 kernel32.QueryUnbiasedInterruptTime.argtypes = [
     ctypes.POINTER(ctypes.c_ulonglong)
 ]
 kernel32.QueryUnbiasedInterruptTime.restype = wintypes.BOOL
+
+
+class LASTINPUTINFO(ctypes.Structure):
+    _fields_ = [("cbSize", wintypes.UINT), ("dwTime", wintypes.DWORD)]
+
+
+def get_idle_time() -> float:
+    """Return seconds since the last keyboard or mouse input."""
+    last_input = LASTINPUTINFO()
+    last_input.cbSize = ctypes.sizeof(LASTINPUTINFO)
+    if not user32.GetLastInputInfo(ctypes.byref(last_input)):
+        raise ctypes.WinError(ctypes.get_last_error())
+
+    current_tick = kernel32.GetTickCount64() & 0xFFFFFFFF
+    elapsed_ms = (current_tick - last_input.dwTime) & 0xFFFFFFFF
+    return elapsed_ms / 1000.0
 
 
 def get_system_sleep_time() -> float:
