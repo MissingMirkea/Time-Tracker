@@ -314,6 +314,10 @@ class TimeTrackerGUI:
         self.daily_goal_minutes = _load_minute_setting(
             "daily_goal_minutes", 240
         )
+        saved_theme = get_setting("theme", "Dark")
+        self.theme_name = (
+            saved_theme if saved_theme in ("Light", "Dark") else "Dark"
+        )
 
         # Apply visual theme
         self._configure_styles()
@@ -417,103 +421,338 @@ class TimeTrackerGUI:
         self.style = ttk.Style()
         self.style.theme_use("clam")
 
-        BG_COLOR = "#F8FAFC"
-        CARD_BG = "#FFFFFF"
-        TEXT_PRIMARY = "#0F172A"
-        ACCENT_GREEN = "#16A34A"
-        ACCENT_RED = "#DC2626"
+        palettes = {
+            "Light": {
+                "background": "#F1F5F9",
+                "surface": "#FDFFFC",
+                "surface_alt": "#F6F9FC",
+                "border": "#E2E8F0",
+                "text": "#0B132B",
+                "muted": "#64748B",
+                "button_text": "#0B132B",
+                "danger_text": "#FDFFFC",
+                "blue": "#39A0ED",
+                "blue_hover": "#2386CF",
+                "blue_light": "#EAF5FC",
+                "red": "#CC2936",
+                "red_hover": "#B5222D",
+            },
+            "Dark": {
+                "background": "#0B132B",
+                "surface": "#111C36",
+                "surface_alt": "#172442",
+                "border": "#2B3A59",
+                "text": "#FDFFFC",
+                "muted": "#AAB6CC",
+                "button_text": "#0B132B",
+                "danger_text": "#FDFFFC",
+                "blue": "#39A0ED",
+                "blue_hover": "#2386CF",
+                "blue_light": "#203A56",
+                "red": "#CC2936",
+                "red_hover": "#B5222D",
+            },
+        }
+        self.palette = palettes[self.theme_name]
+        colors = self.palette
 
-        self.root.configure(bg=BG_COLOR)
-
-        self.style.configure("Main.TFrame", background=BG_COLOR)
-        self.style.configure("Card.TFrame", background=CARD_BG, relief="flat")
+        self.root.configure(bg=colors["background"])
+        self.style.configure("TFrame", background=colors["background"])
+        self.style.configure(
+            "Main.TFrame", background=colors["background"]
+        )
+        self.style.configure(
+            "Card.TFrame", background=colors["surface"], relief="flat"
+        )
+        self.style.configure(
+            "TLabel",
+            background=colors["background"],
+            foreground=colors["text"],
+            font=("Segoe UI", 9),
+        )
+        self.style.configure(
+            "Body.TLabel",
+            background=colors["surface"],
+            foreground=colors["text"],
+            font=("Segoe UI", 9),
+        )
 
         self.style.configure(
             "Header.TLabel",
-            background=CARD_BG,
-            foreground=TEXT_PRIMARY,
-            font=("Segoe UI", 11, "bold"),
+            background=colors["surface"],
+            foreground=colors["text"],
+            font=("Segoe UI", 10, "bold"),
+        )
+        self.style.configure(
+            "Title.TLabel",
+            background=colors["surface"],
+            foreground=colors["text"],
+            font=("Segoe UI", 19, "bold"),
+        )
+        self.style.configure(
+            "Subtitle.TLabel",
+            background=colors["surface"],
+            foreground=colors["muted"],
+            font=("Segoe UI", 9),
+        )
+        self.style.configure(
+            "Status.TLabel",
+            background=colors["surface"],
+            foreground=colors["muted"],
+            font=("Segoe UI", 9, "bold"),
+        )
+        self.style.configure(
+            "Status.Active.TLabel",
+            background=colors["surface"],
+            foreground=colors["blue"],
+            font=("Segoe UI", 9, "bold"),
+        )
+        self.style.configure(
+            "Status.Warning.TLabel",
+            background=colors["surface"],
+            foreground=colors["red"],
+            font=("Segoe UI", 9, "bold"),
         )
 
-        # Table Styling
         self.style.configure(
             "Treeview",
-            background="#FFFFFF",
-            foreground=TEXT_PRIMARY,
-            fieldbackground="#FFFFFF",
-            rowheight=28,
+            background=colors["surface"],
+            foreground=colors["text"],
+            fieldbackground=colors["surface"],
+            rowheight=32,
             font=("Segoe UI", 9),
-            bordercolor="#E2E8F0",
-            borderwidth=1,
+            bordercolor=colors["border"],
+            borderwidth=0,
+            relief="flat",
         )
         self.style.configure(
             "Treeview.Heading",
-            background="#F1F5F9",
-            foreground=TEXT_PRIMARY,
-            font=("Segoe UI", 10, "bold"),
-            padding=6,
+            background=colors["surface_alt"],
+            foreground=colors["muted"],
+            font=("Segoe UI", 9, "bold"),
+            padding=(9, 8),
+            relief="flat",
         )
         self.style.map(
-            "Treeview", background=[("selected", "#E2E8F0")], foreground=[]
+            "Treeview",
+            background=[("selected", colors["blue_light"])],
+            foreground=[("selected", colors["blue"])],
+        )
+        self.style.map(
+            "Treeview.Heading",
+            background=[("active", colors["blue_light"])],
+            foreground=[("active", colors["blue"])],
         )
 
-        # Button Styles
         self.style.configure(
-            "Start.TButton",
-            font=("Segoe UI", 10, "bold"),
-            background="GREEN",
-            foreground="white",
-            padding=6,
+            "TButton",
+            font=("Segoe UI", 9, "bold"),
+            background=colors["surface"],
+            foreground=colors["text"],
+            padding=(12, 8),
+            bordercolor=colors["border"],
+            lightcolor=colors["surface"],
+            darkcolor=colors["surface"],
+            focusthickness=1,
+            focuscolor=colors["blue"],
         )
-        self.style.map("Start.TButton", background=[("active", "#15803D")])
+        self.style.configure(
+            "Primary.TButton",
+            background=colors["blue"],
+            foreground=colors["button_text"],
+            bordercolor=colors["blue"],
+        )
+        self.style.map(
+            "Primary.TButton",
+            background=[
+                ("disabled", colors["border"]),
+                ("active", colors["blue_hover"]),
+            ],
+            foreground=[("disabled", colors["muted"])],
+        )
+        self.style.configure(
+            "Danger.TButton",
+            background=colors["red"],
+            foreground=colors["danger_text"],
+            bordercolor=colors["red"],
+        )
+        self.style.map(
+            "Danger.TButton",
+            background=[
+                ("disabled", colors["surface_alt"]),
+                ("active", colors["red_hover"]),
+            ],
+            foreground=[("disabled", colors["muted"])],
+        )
+        self.style.map(
+            "TButton",
+            background=[
+                ("disabled", colors["surface_alt"]),
+                ("active", colors["blue_light"]),
+            ],
+            foreground=[
+                ("disabled", colors["muted"]),
+                ("active", colors["blue"]),
+            ],
+        )
+        self.style.configure(
+            "TEntry",
+            fieldbackground=colors["surface"],
+            foreground=colors["text"],
+            insertcolor=colors["text"],
+            bordercolor=colors["border"],
+            padding=(8, 7),
+        )
+        self.style.map(
+            "TEntry",
+            bordercolor=[("focus", colors["blue"])],
+            fieldbackground=[("disabled", colors["surface_alt"])],
+        )
+        self.style.configure(
+            "TCombobox",
+            fieldbackground=colors["surface"],
+            background=colors["surface"],
+            foreground=colors["text"],
+            arrowcolor=colors["muted"],
+            bordercolor=colors["border"],
+            padding=(7, 6),
+        )
+        self.style.map(
+            "TCombobox",
+            fieldbackground=[("readonly", colors["surface"])],
+            selectbackground=[("readonly", colors["surface"])],
+            selectforeground=[("readonly", colors["text"])],
+        )
+        self.style.configure(
+            "TCheckbutton",
+            background=colors["background"],
+            foreground=colors["text"],
+            indicatorcolor=colors["surface"],
+            focuscolor=colors["blue"],
+        )
+        self.style.map(
+            "TCheckbutton",
+            background=[("active", colors["blue_light"])],
+            foreground=[("active", colors["blue"])],
+            indicatorcolor=[
+                ("selected", colors["blue"]),
+                ("active", colors["blue_light"]),
+            ],
+        )
+        self.style.configure(
+            "TNotebook",
+            background=colors["surface"],
+            borderwidth=0,
+            tabmargins=(0, 0, 0, 0),
+        )
+        self.style.configure(
+            "TNotebook.Tab",
+            background=colors["surface_alt"],
+            foreground=colors["muted"],
+            font=("Segoe UI", 9, "bold"),
+            padding=(14, 9),
+        )
+        self.style.map(
+            "TNotebook.Tab",
+            background=[
+                ("selected", colors["surface"]),
+                ("active", colors["blue_light"]),
+            ],
+            foreground=[
+                ("selected", colors["blue"]),
+                ("active", colors["blue"]),
+            ],
+        )
+        self.style.configure(
+            "Horizontal.TProgressbar",
+            background=colors["blue"],
+            troughcolor=colors["blue_light"],
+            bordercolor=colors["blue_light"],
+            thickness=8,
+        )
+        self.style.configure(
+            "Vertical.TScrollbar",
+            background=colors["surface_alt"],
+            troughcolor=colors["surface"],
+            bordercolor=colors["surface"],
+            arrowcolor=colors["muted"],
+        )
+        self.style.configure("TSeparator", background=colors["border"])
 
-        self.style.configure(
-            "Stop.TButton",
-            font=("Segoe UI", 10, "bold"),
-            background="RED",
-            foreground="white",
-            padding=6,
+    def _apply_theme(self, theme_name: str):
+        if theme_name not in ("Light", "Dark"):
+            raise ValueError(f"Unsupported theme: {theme_name}")
+
+        self.theme_name = theme_name
+        self._configure_styles()
+        colors = self.palette
+        self.period_error_label.configure(
+            background=colors["surface"], foreground=colors["red"]
         )
-        self.style.map("Stop.TButton", background=[("active", "#B91C1C")])
+        self.total_time_label.configure(
+            background=colors["surface"], foreground=colors["blue"]
+        )
+        self.top_app_label.configure(
+            background=colors["surface"], foreground=colors["text"]
+        )
+        self.goal_label.configure(
+            background=colors["surface"], foreground=colors["muted"]
+        )
+        self.chart.configure(background=colors["surface"])
+        for tree in (self.tree, self.timeline_tree):
+            tree.tag_configure("alternate", background=colors["surface_alt"])
+        self._draw_chart()
 
     def _build_ui(self):
         main_container = ttk.Frame(self.root, style="Main.TFrame", padding=15)
         main_container.pack(fill=tk.BOTH, expand=True)
 
-        # Top Control Card
         control_card = ttk.Frame(
-            main_container, style="Card.TFrame", padding=15
+            main_container, style="Card.TFrame", padding=(20, 15)
         )
         control_card.pack(fill=tk.X, pady=(0, 15))
 
+        title_frame = ttk.Frame(control_card, style="Card.TFrame")
+        title_frame.pack(side=tk.LEFT, fill=tk.Y)
+        ttk.Label(
+            title_frame, text="Time Tracker", style="Title.TLabel"
+        ).pack(anchor=tk.W)
+        ttk.Label(
+            title_frame,
+            text="A clear view of where your time goes",
+            style="Subtitle.TLabel",
+        ).pack(anchor=tk.W, pady=(1, 0))
+
         self.status_label = ttk.Label(
-            control_card, text="Status: STOPPED", style="Header.TLabel"
+            control_card, text="Status: STOPPED", style="Status.TLabel"
         )
-        self.status_label.pack(side=tk.LEFT, padx=5)
+        self.status_label.pack(side=tk.LEFT, padx=(28, 0))
 
         self.btn_stop = ttk.Button(
             control_card,
             text="Stop",
-            style="Stop.TButton",
+            style="Danger.TButton",
             command=self.stop_tracking,
             state=tk.DISABLED,
         )
-        self.btn_stop.pack(side=tk.RIGHT, padx=5)
+        self.btn_stop.pack(side=tk.RIGHT, padx=(8, 0))
 
         self.btn_start = ttk.Button(
             control_card,
             text="Start",
-            style="Start.TButton",
+            style="Primary.TButton",
             command=self.start_tracking,
         )
-        self.btn_start.pack(side=tk.RIGHT, padx=5)
+        self.btn_start.pack(side=tk.RIGHT, padx=(8, 0))
 
-        period_card = ttk.Frame(main_container, style="Card.TFrame", padding=10)
+        period_card = ttk.Frame(
+            main_container, style="Card.TFrame", padding=(14, 10)
+        )
         period_card.pack(fill=tk.X, pady=(0, 12))
 
         ttk.Label(
-            period_card, text="Showing:", style="Header.TLabel"
-        ).pack(side=tk.LEFT, padx=(4, 8))
+            period_card, text="Showing", style="Body.TLabel"
+        ).pack(side=tk.LEFT, padx=(2, 8))
         self.period_var = tk.StringVar(value="Today")
         self.period_combo = ttk.Combobox(
             period_card,
@@ -528,12 +767,16 @@ class TimeTrackerGUI:
         )
         self.start_date_var = tk.StringVar(value=date.today().isoformat())
         self.end_date_var = tk.StringVar(value=date.today().isoformat())
-        ttk.Label(period_card, text="From").pack(side=tk.LEFT, padx=(12, 4))
+        ttk.Label(
+            period_card, text="From", style="Body.TLabel"
+        ).pack(side=tk.LEFT, padx=(12, 4))
         self.start_date_entry = ttk.Entry(
             period_card, textvariable=self.start_date_var, width=11
         )
         self.start_date_entry.pack(side=tk.LEFT)
-        ttk.Label(period_card, text="To").pack(side=tk.LEFT, padx=(8, 4))
+        ttk.Label(
+            period_card, text="To", style="Body.TLabel"
+        ).pack(side=tk.LEFT, padx=(8, 4))
         self.end_date_entry = ttk.Entry(
             period_card, textvariable=self.end_date_var, width=11
         )
@@ -542,10 +785,12 @@ class TimeTrackerGUI:
             entry.bind("<Return>", lambda _event: self.refresh_table())
             entry.bind("<FocusOut>", lambda _event: self.refresh_table())
         self.period_error_label = ttk.Label(
-            period_card, foreground="#DC2626"
+            period_card,
+            foreground=self.palette["red"],
+            background=self.palette["surface"],
         )
         self.period_error_label.pack(side=tk.LEFT, padx=(8, 0))
-        ttk.Label(period_card, text="Search").pack(
+        ttk.Label(period_card, text="Search", style="Body.TLabel").pack(
             side=tk.LEFT, padx=(12, 4)
         )
         self.search_var = tk.StringVar()
@@ -563,6 +808,7 @@ class TimeTrackerGUI:
         ttk.Button(
             period_card,
             text="Export CSV",
+            style="Primary.TButton",
             command=self.export_csv,
         ).pack(side=tk.RIGHT, padx=4)
 
@@ -579,9 +825,9 @@ class TimeTrackerGUI:
         self.total_time_label = ttk.Label(
             summary_frame,
             text="0s",
-            background="#FFFFFF",
-            foreground="#16A34A",
-            font=("Segoe UI", 24, "bold"),
+            background=self.palette["surface"],
+            foreground=self.palette["blue"],
+            font=("Segoe UI", 25, "bold"),
         )
         self.total_time_label.pack(anchor=tk.W, pady=(4, 12))
         ttk.Label(
@@ -590,8 +836,8 @@ class TimeTrackerGUI:
         self.top_app_label = ttk.Label(
             summary_frame,
             text="No activity yet",
-            background="#FFFFFF",
-            foreground="#0F172A",
+            background=self.palette["surface"],
+            foreground=self.palette["text"],
             font=("Segoe UI", 10),
             wraplength=180,
         )
@@ -602,8 +848,8 @@ class TimeTrackerGUI:
         self.goal_label = ttk.Label(
             summary_frame,
             text="0 / 0 min",
-            background="#FFFFFF",
-            foreground="#334155",
+            background=self.palette["surface"],
+            foreground=self.palette["muted"],
             font=("Segoe UI", 9),
         )
         self.goal_label.pack(anchor=tk.W, pady=(4, 2))
@@ -612,6 +858,9 @@ class TimeTrackerGUI:
         )
         self.goal_progress.pack(anchor=tk.W)
 
+        ttk.Separator(dashboard_card, orient=tk.VERTICAL).pack(
+            side=tk.LEFT, fill=tk.Y, padx=(0, 20)
+        )
         chart_frame = ttk.Frame(dashboard_card, style="Card.TFrame")
         chart_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self.chart_title = ttk.Label(
@@ -621,7 +870,7 @@ class TimeTrackerGUI:
         self.chart = tk.Canvas(
             chart_frame,
             height=170,
-            background="#FFFFFF",
+            background=self.palette["surface"],
             highlightthickness=0,
         )
         self.chart.pack(fill=tk.BOTH, expand=True)
@@ -633,15 +882,18 @@ class TimeTrackerGUI:
 
         self.history_tabs = ttk.Notebook(table_card)
         self.history_tabs.pack(fill=tk.BOTH, expand=True)
-        summary_tab = ttk.Frame(self.history_tabs)
-        timeline_tab = ttk.Frame(self.history_tabs)
+        summary_tab = ttk.Frame(self.history_tabs, style="Card.TFrame")
+        timeline_tab = ttk.Frame(self.history_tabs, style="Card.TFrame")
         self.history_tabs.add(summary_tab, text="App Summary")
         self.history_tabs.add(timeline_tab, text="Timeline")
-        summary_controls = ttk.Frame(summary_tab, padding=(6, 6, 6, 3))
+        summary_controls = ttk.Frame(
+            summary_tab, style="Card.TFrame", padding=(8, 10, 8, 8)
+        )
         summary_controls.pack(fill=tk.X)
         ttk.Label(
             summary_controls,
             text="Select an app to exclude it from future tracking.",
+            style="Subtitle.TLabel",
         ).pack(side=tk.LEFT)
         self.exclude_summary_app_button = ttk.Button(
             summary_controls,
@@ -650,11 +902,14 @@ class TimeTrackerGUI:
             state=tk.DISABLED,
         )
         self.exclude_summary_app_button.pack(side=tk.RIGHT)
-        timeline_controls = ttk.Frame(timeline_tab, padding=(6, 6, 6, 3))
+        timeline_controls = ttk.Frame(
+            timeline_tab, style="Card.TFrame", padding=(8, 10, 8, 8)
+        )
         timeline_controls.pack(fill=tk.X)
         ttk.Label(
             timeline_controls,
             text="Select an activity to exclude its app from future tracking.",
+            style="Subtitle.TLabel",
         ).pack(side=tk.LEFT)
         self.exclude_timeline_app_button = ttk.Button(
             timeline_controls,
@@ -671,6 +926,9 @@ class TimeTrackerGUI:
             show="tree headings",
             selectmode="browse",
             style="Treeview",
+        )
+        self.tree.tag_configure(
+            "alternate", background=self.palette["surface_alt"]
         )
         self.tree.heading("#0", text="Icon")
         self.tree.column(
@@ -701,6 +959,9 @@ class TimeTrackerGUI:
             show="headings",
             selectmode="browse",
             style="Treeview",
+        )
+        self.timeline_tree.tag_configure(
+            "alternate", background=self.palette["surface_alt"]
         )
         for column, heading in (
             ("timestamp", "Start Time"),
@@ -873,14 +1134,20 @@ class TimeTrackerGUI:
                 or search in row[1].casefold()
             )
         ]
-        for app_name, window_title, total_seconds, executable_path in visible_summary:
+        for index, (
+            app_name,
+            window_title,
+            total_seconds,
+            executable_path,
+        ) in enumerate(visible_summary):
             image = self._get_app_image(app_name, executable_path)
             item_options = {
                 "values": (
                     app_name,
                     window_title,
                     self.format_time(total_seconds),
-                )
+                ),
+                "tags": ("alternate",) if index % 2 else (),
             }
             if image is not None:
                 item_options["image"] = image
@@ -890,6 +1157,7 @@ class TimeTrackerGUI:
                 **item_options,
             )
         timeline = get_activities_for_period(start_key, end_key)
+        visible_timeline_index = 0
         for timestamp, app_name, window_title, duration in timeline:
             if search and search not in app_name.casefold() and search not in window_title.casefold():
                 continue
@@ -903,7 +1171,13 @@ class TimeTrackerGUI:
                     window_title,
                     self.format_time(duration),
                 ),
+                tags=(
+                    ("alternate",)
+                    if visible_timeline_index % 2
+                    else ()
+                ),
             )
+            visible_timeline_index += 1
 
     def refresh_dashboard(
         self,
@@ -982,7 +1256,7 @@ class TimeTrackerGUI:
                 20,
                 text="No activity for this period yet.",
                 anchor=tk.W,
-                fill="#64748B",
+                fill=self.palette["muted"],
                 font=("Segoe UI", 9),
             )
             return
@@ -1004,15 +1278,23 @@ class TimeTrackerGUI:
                 y,
                 text=display_label,
                 anchor=tk.W,
-                fill="#334155",
+                fill=self.palette["text"],
                 font=("Segoe UI", 9),
             )
             self.chart.create_rectangle(
                 bar_start,
+                y - 5,
+                bar_start + bar_width,
+                y + 5,
+                fill=self.palette["blue_light"],
+                outline="",
+            )
+            self.chart.create_rectangle(
+                bar_start,
                 y - 6,
-                bar_start + bar_width * value / max_value,
+                bar_start + max(2, bar_width * value / max_value),
                 y + 6,
-                fill="#16A34A",
+                fill=self.palette["blue"],
                 outline="",
             )
             self.chart.create_text(
@@ -1020,7 +1302,7 @@ class TimeTrackerGUI:
                 y,
                 text=self.format_time(value),
                 anchor=tk.E,
-                fill="#64748B",
+                fill=self.palette["muted"],
                 font=("Segoe UI", 8),
             )
 
@@ -1082,41 +1364,86 @@ class TimeTrackerGUI:
         dialog.title("Settings & Privacy")
         dialog.transient(self.root)
         dialog.resizable(False, False)
-        container = ttk.Frame(dialog, padding=18)
+        dialog.configure(bg=self.palette["background"])
+        container = ttk.Frame(
+            dialog, style="Main.TFrame", padding=20
+        )
         container.pack(fill=tk.BOTH, expand=True)
 
-        ttk.Label(
+        ttk.Label(container, text="Appearance").grid(
+            row=0, column=0, sticky=tk.W, pady=5
+        )
+        theme_var = tk.StringVar(value=self.theme_name)
+        ttk.Combobox(
             container,
-            text="Idle detection (minutes; 0 disables)",
-        ).grid(row=0, column=0, sticky=tk.W, pady=5)
-        idle_var = tk.StringVar(value=str(self.idle_threshold_minutes))
-        ttk.Entry(
-            container, textvariable=idle_var, width=12
+            textvariable=theme_var,
+            values=("Light", "Dark"),
+            state="readonly",
+            width=12,
         ).grid(row=0, column=1, sticky=tk.E, pady=5)
 
         ttk.Label(
             container,
-            text="Daily tracking goal (minutes; 0 disables)",
+            text="Idle detection (minutes; 0 disables)",
         ).grid(row=1, column=0, sticky=tk.W, pady=5)
-        goal_var = tk.StringVar(value=str(self.daily_goal_minutes))
+        idle_var = tk.StringVar(value=str(self.idle_threshold_minutes))
         ttk.Entry(
-            container, textvariable=goal_var, width=12
+            container, textvariable=idle_var, width=12
         ).grid(row=1, column=1, sticky=tk.E, pady=5)
 
         ttk.Label(
             container,
+            text="Daily tracking goal (minutes; 0 disables)",
+        ).grid(row=2, column=0, sticky=tk.W, pady=5)
+        goal_var = tk.StringVar(value=str(self.daily_goal_minutes))
+        ttk.Entry(
+            container, textvariable=goal_var, width=12
+        ).grid(row=2, column=1, sticky=tk.E, pady=5)
+
+        ttk.Label(
+            container,
             text="Excluded application patterns (one per line)",
-        ).grid(row=2, column=0, columnspan=2, sticky=tk.W, pady=(12, 2))
-        apps_text = tk.Text(container, width=52, height=4, wrap=tk.WORD)
-        apps_text.grid(row=3, column=0, columnspan=2, sticky=tk.EW)
+        ).grid(row=3, column=0, columnspan=2, sticky=tk.W, pady=(12, 2))
+        apps_text = tk.Text(
+            container,
+            width=52,
+            height=4,
+            wrap=tk.WORD,
+            background=self.palette["surface"],
+            foreground=self.palette["text"],
+            insertbackground=self.palette["text"],
+            relief=tk.FLAT,
+            highlightthickness=1,
+            highlightbackground=self.palette["border"],
+            highlightcolor=self.palette["blue"],
+            padx=8,
+            pady=6,
+            font=("Segoe UI", 9),
+        )
+        apps_text.grid(row=4, column=0, columnspan=2, sticky=tk.EW)
         apps_text.insert("1.0", self.excluded_apps_var.get())
 
         ttk.Label(
             container,
             text="Excluded window-title patterns (one per line)",
-        ).grid(row=4, column=0, columnspan=2, sticky=tk.W, pady=(12, 2))
-        titles_text = tk.Text(container, width=52, height=4, wrap=tk.WORD)
-        titles_text.grid(row=5, column=0, columnspan=2, sticky=tk.EW)
+        ).grid(row=5, column=0, columnspan=2, sticky=tk.W, pady=(12, 2))
+        titles_text = tk.Text(
+            container,
+            width=52,
+            height=4,
+            wrap=tk.WORD,
+            background=self.palette["surface"],
+            foreground=self.palette["text"],
+            insertbackground=self.palette["text"],
+            relief=tk.FLAT,
+            highlightthickness=1,
+            highlightbackground=self.palette["border"],
+            highlightcolor=self.palette["blue"],
+            padx=8,
+            pady=6,
+            font=("Segoe UI", 9),
+        )
+        titles_text.grid(row=6, column=0, columnspan=2, sticky=tk.EW)
         titles_text.insert("1.0", self.excluded_titles_var.get())
 
         startup_var = tk.BooleanVar(
@@ -1126,23 +1453,26 @@ class TimeTrackerGUI:
             container,
             text="Start with Windows (minimized to tray)",
             variable=startup_var,
-        ).grid(row=6, column=0, columnspan=2, sticky=tk.W, pady=(12, 5))
+        ).grid(row=7, column=0, columnspan=2, sticky=tk.W, pady=(12, 5))
 
         button_row = ttk.Frame(container)
-        button_row.grid(row=7, column=0, columnspan=2, sticky=tk.EW, pady=(12, 0))
+        button_row.grid(row=8, column=0, columnspan=2, sticky=tk.EW, pady=(12, 0))
         ttk.Button(
             button_row,
             text="Delete Today's Data",
+            style="Danger.TButton",
             command=self._delete_today_data,
         ).pack(side=tk.LEFT)
         ttk.Button(
             button_row,
             text="Delete All Data",
+            style="Danger.TButton",
             command=self._delete_all_data,
         ).pack(side=tk.LEFT, padx=6)
         ttk.Button(
             button_row,
             text="Save",
+            style="Primary.TButton",
             command=lambda: self._save_settings(
                 dialog,
                 apps_text,
@@ -1150,6 +1480,7 @@ class TimeTrackerGUI:
                 idle_var,
                 goal_var,
                 startup_var,
+                theme_var,
             ),
         ).pack(side=tk.RIGHT)
         ttk.Button(
@@ -1168,6 +1499,7 @@ class TimeTrackerGUI:
         idle_var: tk.StringVar,
         goal_var: tk.StringVar,
         startup_var: tk.BooleanVar,
+        theme_var: tk.StringVar,
     ):
         try:
             idle_minutes = int(idle_var.get())
@@ -1185,6 +1517,14 @@ class TimeTrackerGUI:
         excluded_apps = apps_text.get("1.0", "end-1c").strip()
         excluded_titles = titles_text.get("1.0", "end-1c").strip()
         start_with_windows = startup_var.get()
+        theme_name = theme_var.get()
+        if theme_name not in ("Light", "Dark"):
+            messagebox.showerror(
+                "Invalid appearance",
+                "Choose either the Light or Dark theme.",
+                parent=dialog,
+            )
+            return
         try:
             _set_windows_startup(start_with_windows)
         except OSError as error:
@@ -1201,6 +1541,7 @@ class TimeTrackerGUI:
             "excluded_apps": excluded_apps,
             "excluded_titles": excluded_titles,
             "start_with_windows": "1" if start_with_windows else "0",
+            "theme": theme_name,
         }
         for key, value in settings.items():
             set_setting(key, value)
@@ -1208,6 +1549,8 @@ class TimeTrackerGUI:
         self.daily_goal_minutes = goal_minutes
         self.excluded_apps_var.set(excluded_apps)
         self.excluded_titles_var.set(excluded_titles)
+        if theme_name != self.theme_name:
+            self._apply_theme(theme_name)
 
         if self.is_tracking:
             excluded_now = self._is_activity_excluded(
@@ -1308,7 +1651,10 @@ class TimeTrackerGUI:
             self.is_tracking = True
             self.btn_start.config(state=tk.DISABLED)
             self.btn_stop.config(state=tk.NORMAL)
-            self.status_label.config(text="Status: TRACKING...")
+            self.status_label.config(
+                text="Status: TRACKING...",
+                style="Status.Active.TLabel",
+            )
 
             self.current_app = current_app
             self.current_title = current_title
@@ -1335,7 +1681,12 @@ class TimeTrackerGUI:
                 if stopped_for_sleep
                 else "Status: STOPPED"
             )
-            self.status_label.config(text=status)
+            status_style = (
+                "Status.Warning.TLabel"
+                if "IDLE" in status or "SLEEP" in status
+                else "Status.TLabel"
+            )
+            self.status_label.config(text=status, style=status_style)
             if self.tray_icon is not None:
                 self.tray_icon.update_menu()
 

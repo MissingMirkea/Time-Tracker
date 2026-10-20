@@ -18,7 +18,9 @@ A lightweight, local-first Windows desktop application built with Python and Tki
   range, or inspect individual app switches in chronological order.
 * **Daily Goal:** Set a daily tracked-time goal and monitor dashboard progress.
 * **Optional Windows Startup:** Launch minimized to the notification area.
-* **Modern GUI:** Styled Tkinter (`clam` theme) with custom window icons and taskbar integration.
+* **Polished GUI:** A Porcelain, Prussian Blue, Blue Bell, and Tomato Jam
+  palette with a dark theme by default, an optional light theme, clear status
+  states, and red reserved for stop and delete actions.
 * **Automated Builds:** GitHub Actions runs tests and builds a Windows executable for version tags.
 
 ## 🚀 Quick Start (For Developers)
