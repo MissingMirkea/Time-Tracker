@@ -2,7 +2,7 @@
 
 A lightweight, local-first Windows desktop application built with Python and Tkinter that automatically tracks active application usage and window focus.
 
-![App Demo](Main-Page.png) (Settings-Page.png)
+![App Demo](Main-Page.png) 
 
 ## ✨ Key Features
 * **Automatic Focus Tracking:** Detects active window switches in real time using native Windows API hooks (`ctypes`).
@@ -22,6 +22,9 @@ A lightweight, local-first Windows desktop application built with Python and Tki
   palette with a dark theme by default, an optional light theme, clear status
   states, and red reserved for stop and delete actions.
 * **Automated Builds:** GitHub Actions runs tests and builds a Windows executable for version tags.
+
+  
+![App Demo](Settings-Page.png)
 
 ## 🚀 Quick Start (For Developers)
 
