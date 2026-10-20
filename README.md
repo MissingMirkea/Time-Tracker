@@ -2,7 +2,8 @@
 
 A lightweight, local-first Windows desktop application built with Python and Tkinter that automatically tracks active application usage and window focus.
 
-![App Demo](preview.png)
+![App Demo](<img width="944" height="754" alt="Main-Page" src="https://github.com/user-attachments/assets/f48740f1-e19f-4978-8395-b151159eb086" />
+)
 
 ## ✨ Key Features
 * **Automatic Focus Tracking:** Detects active window switches in real time using native Windows API hooks (`ctypes`).
