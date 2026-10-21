@@ -1,6 +1,11 @@
 import time
-from database import create_database, log_activity
-from tracker import get_active_window_title
+
+if __package__:
+    from .database import create_database, log_activity
+    from .tracker import get_active_window_title
+else:
+    from database import create_database, log_activity
+    from tracker import get_active_window_title
 
 def run_tracker():
 # Check if the database exists and create it if it doesn't

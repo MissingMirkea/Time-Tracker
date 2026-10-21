@@ -2,7 +2,7 @@
 
 A lightweight, local-first Windows desktop application built with Python and Tkinter that automatically tracks active application usage and window focus.
 
-![App Demo](Main-Page.png) 
+![App Demo](assets/Main-Page.png) 
 
 ## ✨ Key Features
 * **Automatic Focus Tracking:** Detects active window switches in real time using native Windows API hooks (`ctypes`).
@@ -24,7 +24,7 @@ A lightweight, local-first Windows desktop application built with Python and Tki
 * **Automated Builds:** GitHub Actions runs tests and builds a Windows executable for version tags.
 
   
-![App Demo](Settings-Page.png)
+![App Demo](assets/Settings-Page.png)
 
 ## 🚀 Quick Start (For Developers)
 
@@ -46,7 +46,7 @@ python -m venv venv
 pip install -r requirements.txt
 
 # Run Application
-python gui.py
+python -m src.gui
 ```
 
 Use the **Showing** menu to switch between **Today** and **This Week**. The

@@ -16,18 +16,40 @@ from tkinter import filedialog, messagebox, ttk
 from ctypes import wintypes
 from PIL import Image
 import pystray
-from database import (
-    create_database,
-    delete_all_activities,
-    delete_activities_for_period,
-    get_activities_for_period,
-    get_daily_totals,
-    get_setting,
-    get_summary_for_period,
-    log_activity,
-    set_setting,
-)
-from tracker import get_active_window_info, get_idle_time, get_system_sleep_time
+if __package__:
+    from .database import (
+        create_database,
+        delete_all_activities,
+        delete_activities_for_period,
+        get_activities_for_period,
+        get_daily_totals,
+        get_setting,
+        get_summary_for_period,
+        log_activity,
+        set_setting,
+    )
+    from .tracker import (
+        get_active_window_info,
+        get_idle_time,
+        get_system_sleep_time,
+    )
+else:
+    from database import (
+        create_database,
+        delete_all_activities,
+        delete_activities_for_period,
+        get_activities_for_period,
+        get_daily_totals,
+        get_setting,
+        get_summary_for_period,
+        log_activity,
+        set_setting,
+    )
+    from tracker import (
+        get_active_window_info,
+        get_idle_time,
+        get_system_sleep_time,
+    )
 
 
 def resource_path(relative_path: str) -> str:
@@ -35,7 +57,7 @@ def resource_path(relative_path: str) -> str:
     try:
         base_path = sys._MEIPASS
     except Exception:
-        base_path = os.path.abspath(".")
+        base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     return os.path.join(base_path, relative_path)
 
 
@@ -281,8 +303,7 @@ class TimeTrackerGUI:
         self.root.geometry("940x720")
         self.root.minsize(760, 600)
 
-        # Set Window Icon if app_icon.ico exists in project directory
-        icon_path = resource_path("app_icon.ico")
+        icon_path = resource_path(os.path.join("assets", "app_icon.ico"))
         if os.path.exists(icon_path):
             self.root.iconbitmap(icon_path)
 
@@ -331,7 +352,7 @@ class TimeTrackerGUI:
         self.root.after(100, self._process_tray_actions)
 
     def _setup_tray_icon(self):
-        icon_path = resource_path("app_icon.ico")
+        icon_path = resource_path(os.path.join("assets", "app_icon.ico"))
         with Image.open(icon_path) as image:
             tray_image = image.convert("RGBA").resize(
                 (64, 64), Image.Resampling.LANCZOS

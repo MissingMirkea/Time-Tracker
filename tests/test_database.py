@@ -5,7 +5,7 @@ import unittest
 from datetime import date, timedelta
 from unittest.mock import patch
 
-import database
+import src.database as database
 
 
 class DatabaseFeatureTests(unittest.TestCase):
