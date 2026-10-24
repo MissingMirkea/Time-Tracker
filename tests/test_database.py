@@ -114,6 +114,28 @@ class DatabaseFeatureTests(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0][1:], ("Legacy.exe", "Old data", 30.0))
 
+    def test_frozen_linux_database_uses_xdg_data_directory(self):
+        xdg_data_home = os.path.join(self.temp_dir.name, "xdg-data")
+        with (
+            patch.object(database.sys, "platform", "linux"),
+            patch.dict(os.environ, {"XDG_DATA_HOME": xdg_data_home}),
+        ):
+            self.assertEqual(
+                database._get_frozen_data_directory(),
+                os.path.join(xdg_data_home, "TimeTracker"),
+            )
+
+    def test_frozen_linux_database_falls_back_to_local_share(self):
+        with (
+            patch.object(database.sys, "platform", "linux"),
+            patch.dict(os.environ, {"XDG_DATA_HOME": ""}),
+            patch("src.database.os.path.expanduser", return_value=self.temp_dir.name),
+        ):
+            self.assertEqual(
+                database._get_frozen_data_directory(),
+                os.path.join(self.temp_dir.name, ".local", "share", "TimeTracker"),
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

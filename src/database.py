@@ -4,11 +4,21 @@ import sys
 import sqlite3
 from datetime import datetime
 
+
+def _get_frozen_data_directory():
+    if sys.platform == "win32":
+        data_root = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+    elif sys.platform.startswith("linux"):
+        data_root = os.environ.get("XDG_DATA_HOME")
+        if not data_root or not os.path.isabs(data_root):
+            data_root = os.path.join(os.path.expanduser("~"), ".local", "share")
+    else:
+        data_root = os.path.expanduser("~")
+    return os.path.join(data_root, "TimeTracker")
+
+
 if getattr(sys, "frozen", False):
-    _data_directory = os.path.join(
-        os.environ.get("LOCALAPPDATA") or os.path.expanduser("~"),
-        "TimeTracker",
-    )
+    _data_directory = _get_frozen_data_directory()
     DATABASE_NAME = os.path.join(_data_directory, "my_database.db")
     _legacy_database_name = os.path.join(
         os.path.dirname(sys.executable), "my_database.db"
