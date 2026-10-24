@@ -1,0 +1,25 @@
+# Virtual Environment
+venv/
+.venv/
+env/
+
+# SQLite Databases (Local user data)
+*.db
+*.sqlite
+*.sqlite3
+
+# PyInstaller / Build Artifacts
+build/
+dist/
+*.spec
+
+# Python Cache & Bytecode
+__pycache__/
+*.pyc
+*.pyo
+
+# IDE & System Files
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
